@@ -1,69 +1,11 @@
 use iced::widget::{
-    Id, button, checkbox, column, container, operation, pick_list, row, rule, scrollable, space,
-    text, text_input,
+    button, checkbox, column, container, pick_list, row, rule, scrollable, space, text, text_input,
 };
-use iced::{Center, Element, Fill, Task};
+use iced::{Center, Element, Fill};
 use ruru_types::ProviderId;
 
-use super::{Output, style};
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Section {
-    #[default]
-    Providers,
-}
-
-#[derive(Clone)]
-pub enum Input {
-    SectionSelected(Section),
-    ProviderSelected(ProviderId),
-    ProviderRowToggled(ProviderId),
-    ApiKeyChanged(ProviderId, String),
-    SaveKeyRequested(ProviderId),
-    RemoveKeyRequested(ProviderId),
-    RefreshModelsRequested(ProviderId),
-    ModelToggled(ProviderId, String, bool),
-}
-
-impl std::fmt::Debug for Input {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SectionSelected(section) => formatter
-                .debug_tuple("SectionSelected")
-                .field(section)
-                .finish(),
-            Self::ProviderSelected(id) => {
-                formatter.debug_tuple("ProviderSelected").field(id).finish()
-            }
-            Self::ProviderRowToggled(id) => formatter
-                .debug_tuple("ProviderRowToggled")
-                .field(id)
-                .finish(),
-            Self::ApiKeyChanged(id, _) => formatter
-                .debug_tuple("ApiKeyChanged")
-                .field(id)
-                .field(&"[redacted]")
-                .finish(),
-            Self::SaveKeyRequested(id) => {
-                formatter.debug_tuple("SaveKeyRequested").field(id).finish()
-            }
-            Self::RemoveKeyRequested(id) => formatter
-                .debug_tuple("RemoveKeyRequested")
-                .field(id)
-                .finish(),
-            Self::RefreshModelsRequested(id) => formatter
-                .debug_tuple("RefreshModelsRequested")
-                .field(id)
-                .finish(),
-            Self::ModelToggled(id, model, enabled) => formatter
-                .debug_tuple("ModelToggled")
-                .field(id)
-                .field(model)
-                .field(enabled)
-                .finish(),
-        }
-    }
-}
+use super::super::style;
+use super::{Input, ProviderView, Section, Settings};
 
 #[derive(Clone, PartialEq, Eq)]
 struct ProviderChoice {
@@ -77,36 +19,7 @@ impl std::fmt::Display for ProviderChoice {
     }
 }
 
-pub struct ProviderView {
-    id: ProviderId,
-    name: String,
-    api_key_draft: String,
-    credential_present: bool,
-    discovered_models: Vec<String>,
-    selected_models: Vec<String>,
-    discovering: bool,
-    error: Option<String>,
-}
-
 impl ProviderView {
-    pub fn new(
-        id: ProviderId,
-        name: impl Into<String>,
-        has_key: bool,
-        models: Vec<String>,
-    ) -> Self {
-        Self {
-            id,
-            name: name.into(),
-            api_key_draft: String::new(),
-            credential_present: has_key,
-            discovered_models: models.clone(),
-            selected_models: models,
-            discovering: false,
-            error: None,
-        }
-    }
-
     fn detail_view(&self) -> Element<'_, Input> {
         let id = self.id.clone();
         let key_input = text_input("Paste an API key", &self.api_key_draft)
@@ -214,157 +127,7 @@ impl ProviderView {
     }
 }
 
-pub struct Settings {
-    scroll_id: Id,
-    providers: Vec<ProviderView>,
-    active_provider: Option<ProviderId>,
-    error: Option<String>,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            scroll_id: Id::unique(),
-            providers: Vec::new(),
-            active_provider: None,
-            error: None,
-        }
-    }
-}
-
 impl Settings {
-    pub fn with_providers(mut self, providers: Vec<ProviderView>) -> Self {
-        self.providers = providers;
-        self
-    }
-
-    fn provider_mut(&mut self, id: &ProviderId) -> Option<&mut ProviderView> {
-        self.providers
-            .iter_mut()
-            .find(|provider| &provider.id == id)
-    }
-
-    pub fn update(&mut self, input: Input) -> Option<Output> {
-        match input {
-            Input::SectionSelected(section) => Some(Output::JumpToSection(section)),
-            Input::ProviderSelected(id) => {
-                if self
-                    .providers
-                    .iter()
-                    .any(|provider| provider.id == id && !provider.credential_present)
-                {
-                    self.active_provider = Some(id);
-                }
-                None
-            }
-            Input::ProviderRowToggled(id) => {
-                if self.active_provider.as_ref() == Some(&id) {
-                    self.active_provider = None;
-                } else if self
-                    .providers
-                    .iter()
-                    .any(|provider| provider.id == id && provider.credential_present)
-                {
-                    self.active_provider = Some(id.clone());
-                    return Some(Output::DiscoverModels(id));
-                }
-                None
-            }
-            Input::ApiKeyChanged(id, value) => {
-                if let Some(provider) = self.provider_mut(&id) {
-                    provider.api_key_draft = value;
-                    provider.error = None;
-                }
-                None
-            }
-            Input::SaveKeyRequested(id) => self.provider_mut(&id).and_then(|provider| {
-                let key = provider.api_key_draft.trim();
-                (!key.is_empty()).then(|| Output::SaveKey(id, key.to_owned()))
-            }),
-            Input::RemoveKeyRequested(id) => Some(Output::RemoveKey(id)),
-            Input::RefreshModelsRequested(id) => Some(Output::DiscoverModels(id)),
-            Input::ModelToggled(id, model, enabled) => Some(Output::SetModel {
-                provider: id,
-                model,
-                enabled,
-            }),
-        }
-    }
-
-    pub fn key_saved(&mut self, id: &ProviderId) {
-        if let Some(provider) = self.provider_mut(id) {
-            provider.credential_present = true;
-            provider.api_key_draft.clear();
-            provider.error = None;
-        }
-    }
-
-    pub fn key_removed(&mut self, id: &ProviderId) {
-        if let Some(provider) = self.provider_mut(id) {
-            provider.credential_present = false;
-            provider.api_key_draft.clear();
-            provider.discovered_models.clear();
-            provider.discovering = false;
-            provider.error = None;
-        }
-        if self.active_provider.as_ref() == Some(id) {
-            self.active_provider = None;
-        }
-    }
-
-    pub fn set_selected_models(&mut self, id: &ProviderId, models: Vec<String>) {
-        if let Some(provider) = self.provider_mut(id) {
-            if provider.discovered_models.is_empty() {
-                provider.discovered_models = models.clone();
-            }
-            provider.selected_models = models;
-        }
-    }
-
-    pub fn start_discovery(&mut self, id: &ProviderId) {
-        if let Some(provider) = self.provider_mut(id) {
-            provider.discovering = true;
-            provider.error = None;
-        }
-    }
-
-    pub fn finish_discovery(&mut self, id: &ProviderId, models: Vec<String>) {
-        if let Some(provider) = self.provider_mut(id) {
-            provider.discovered_models = models;
-            provider.discovering = false;
-            provider.error = None;
-        }
-    }
-
-    pub fn set_error(&mut self, id: &ProviderId, error: String) {
-        if let Some(provider) = self.provider_mut(id) {
-            provider.discovering = false;
-            provider.error = Some(error);
-        }
-    }
-
-    pub fn set_global_error(&mut self, error: String) {
-        self.error = Some(error);
-    }
-    pub fn clear_error(&mut self) {
-        self.error = None;
-    }
-
-    pub fn discard_draft(&mut self) {
-        for provider in &mut self.providers {
-            provider.api_key_draft.clear();
-        }
-        self.active_provider = None;
-    }
-
-    pub fn jump_to_section<T>(&self, section: Section) -> Task<T> {
-        match section {
-            Section::Providers => {
-                operation::snap_to(self.scroll_id.clone(), operation::RelativeOffset::START)
-            }
-        }
-    }
-
     pub fn view(&self) -> Element<'_, Input> {
         let navigation = column![
             button(text("Providers & Models").size(style::SECTION_TEXT_SIZE))
@@ -405,7 +168,6 @@ impl Settings {
         .height(Fill)
         .into()
     }
-
     fn provider_view(&self) -> Element<'_, Input> {
         let mut content: iced::widget::Column<'_, Input> = column![
             text("Providers & Models").size(style::PAGE_HEADING_SIZE),
@@ -546,100 +308,5 @@ impl Settings {
             content = content.push(text(error).color(style::DANGER_COLOR));
         }
         container(content).width(Fill).into()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn navigation_requests_scroll_to_provider_section() {
-        let mut settings = Settings::default();
-
-        assert!(matches!(
-            settings.update(Input::SectionSelected(Section::Providers)),
-            Some(Output::JumpToSection(Section::Providers))
-        ));
-    }
-
-    #[test]
-    fn add_provider_opens_an_unconnected_provider() {
-        let id = ProviderId::new("openai");
-        let mut settings = Settings::default().with_providers(vec![ProviderView::new(
-            id.clone(),
-            "OpenAI",
-            false,
-            Vec::new(),
-        )]);
-
-        assert!(
-            settings
-                .update(Input::ProviderSelected(id.clone()))
-                .is_none()
-        );
-        assert_eq!(settings.active_provider, Some(id.clone()));
-
-        settings.key_saved(&id);
-        assert!(settings.providers[0].credential_present);
-        assert_eq!(settings.active_provider, Some(id));
-    }
-
-    #[test]
-    fn managing_a_connected_provider_starts_discovery() {
-        let id = ProviderId::new("openai");
-        let mut settings = Settings::default().with_providers(vec![ProviderView::new(
-            id.clone(),
-            "OpenAI",
-            true,
-            Vec::new(),
-        )]);
-
-        assert!(matches!(
-            settings.update(Input::ProviderRowToggled(id.clone())),
-            Some(Output::DiscoverModels(provider)) if provider == id
-        ));
-        assert_eq!(settings.active_provider, Some(id.clone()));
-        assert!(settings.update(Input::ProviderRowToggled(id)).is_none());
-        assert_eq!(settings.active_provider, None);
-    }
-
-    #[test]
-    fn provider_key_drafts_are_independent() {
-        let first = ProviderId::new("first");
-        let second = ProviderId::new("second");
-        let mut settings = Settings::default().with_providers(vec![
-            ProviderView::new(first.clone(), "First", false, Vec::new()),
-            ProviderView::new(second.clone(), "Second", false, Vec::new()),
-        ]);
-
-        settings.update(Input::ApiKeyChanged(first.clone(), "first-key".into()));
-        settings.update(Input::ApiKeyChanged(second.clone(), "second-key".into()));
-        assert!(
-            matches!(settings.update(Input::SaveKeyRequested(first.clone())), Some(Output::SaveKey(id, key)) if id == first && key == "first-key")
-        );
-        assert!(
-            matches!(settings.update(Input::SaveKeyRequested(second.clone())), Some(Output::SaveKey(id, key)) if id == second && key == "second-key")
-        );
-    }
-
-    #[test]
-    fn key_is_submitted_only_on_commit_and_is_redacted_from_debug() {
-        let id = ProviderId::new("test");
-        let mut settings = Settings::default().with_providers(vec![ProviderView::new(
-            id.clone(),
-            "Test",
-            false,
-            Vec::new(),
-        )]);
-        assert!(
-            settings
-                .update(Input::ApiKeyChanged(id.clone(), " sk-test ".into()))
-                .is_none()
-        );
-        assert!(
-            matches!(settings.update(Input::SaveKeyRequested(id.clone())), Some(Output::SaveKey(provider, key)) if provider == id && key == "sk-test")
-        );
-        assert!(!format!("{:?}", Input::ApiKeyChanged(id, "sk-test".into())).contains("sk-test"));
     }
 }

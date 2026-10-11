@@ -1,13 +1,9 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-use futures_util::future::Abortable;
-use futures_util::future::BoxFuture;
+use crate::{Provider, ProviderOutput, ProviderRequest, ProviderStream};
+use futures_util::future::{Abortable, BoxFuture};
 use futures_util::{StreamExt, stream};
 use ruru_types::Target;
 
-use crate::types::RequestAbortController;
-use crate::{Provider, ProviderOutput, ProviderRequest, ProviderStream};
+use super::MockProvider;
 
 const DEFAULT_ANSWER: &str = r"
 ## Epistemic Uncertainty
@@ -56,22 +52,7 @@ In short:
 > **Epistemic uncertainty describes what we do not know—and, importantly, what we may be able to learn.**
 ";
 
-#[derive(Debug, Clone)]
-pub struct MockProvider {
-    chunk_delay: Duration,
-    request_abort: RequestAbortController,
-    last_request: Arc<Mutex<Option<(String, ProviderRequest)>>>,
-}
-
 impl MockProvider {
-    pub fn new(chunk_delay: Duration) -> Self {
-        Self {
-            chunk_delay,
-            request_abort: RequestAbortController::default(),
-            last_request: Arc::default(),
-        }
-    }
-
     fn answer(request: &ProviderRequest) -> String {
         let has_image = matches!(request.target, Some(Target::Image(_)));
 
@@ -85,12 +66,6 @@ impl MockProvider {
             }
             (None, false) => DEFAULT_ANSWER.to_owned(),
         }
-    }
-}
-
-impl Default for MockProvider {
-    fn default() -> Self {
-        Self::new(Duration::from_millis(55))
     }
 }
 

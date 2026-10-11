@@ -1,19 +1,23 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_channel::mpsc;
-use futures_util::{Stream, StreamExt, stream};
-use ruru_capture::new_capturer;
-use ruru_config::KeychainCredentialStore;
+use ruru_capture::Capturer;
 use ruru_types::{ImageCapture, ModelSelection, ProviderId, Target, WindowBounds};
 
-use crate::core::Core;
-pub use crate::state::Capture;
+use crate::settings::Settings;
+use crate::state::{Core, State};
 
-mod core;
+mod capture;
+mod handle_input;
 mod hotkey;
 mod providers;
+mod requests;
+mod runtime;
 mod settings;
 mod state;
+
+pub use runtime::start;
+pub use state::Capture;
 
 pub type ProviderRequestId = u64;
 pub use settings::{ProviderSettingsInfo, SettingsChange, SettingsSnapshot, SettingsUpdate};
@@ -75,62 +79,173 @@ pub enum Output {
     },
 }
 
-pub fn start() -> (Sender, impl Stream<Item = Output>, SettingsSnapshot) {
-    let (sender, inputs) = mpsc::unbounded();
-    let settings = Arc::new(settings::Settings::load(Arc::new(
-        KeychainCredentialStore::default(),
-    )));
-    let initial_settings = settings.snapshot();
-    let core = Arc::new(Core::new(settings.providers(), Arc::from(new_capturer())));
-    let hotkey_outputs = hotkey::outputs(Arc::clone(&core));
-    let responses = inputs
-        .map(move |input| match input {
-            Input::DiscoverModels(id) => settings.discover(Arc::clone(&core), id),
-            Input::SaveKey(id, key) => match settings.save_key(id.clone(), key) {
-                Ok(update) => {
-                    core.forget_provider_request();
-                    stream::iter([Output::SettingsUpdated(update)])
-                        .chain(settings.discover(Arc::clone(&core), id))
-                        .boxed()
-                }
-                Err(error) => settings_error(Some(id), error),
-            },
-            Input::RemoveKey(id) => match settings.remove_key(id.clone()) {
-                Ok(update) => {
-                    core.forget_provider_request();
-                    stream::iter([Output::SettingsUpdated(update)]).boxed()
-                }
-                Err(error) => settings_error(Some(id), error),
-            },
-            Input::SetModel {
-                provider,
-                model,
-                enabled,
-            } => match settings.set_model(provider.clone(), model, enabled) {
-                Ok(update) => {
-                    core.forget_provider_request();
-                    stream::iter([Output::SettingsUpdated(update)]).boxed()
-                }
-                Err(error) => settings_error(Some(provider), error),
-            },
-            Input::SelectModel(model) => match settings.select_model(model) {
-                Ok(()) => stream::empty().boxed(),
-                Err(error) => settings_error(None, error),
-            },
-            input => core.handle_input(input),
-        })
-        .flatten_unordered(None);
-
-    (
-        sender,
-        stream::select(hotkey_outputs, responses),
-        initial_settings,
-    )
+impl Core {
+    pub(crate) fn new(settings: Arc<Settings>, capturer: Arc<dyn Capturer>) -> Self {
+        Self {
+            state: Mutex::new(State::default()),
+            settings,
+            capturer,
+        }
+    }
 }
 
-fn settings_error(
-    provider: Option<ProviderId>,
-    error: String,
-) -> futures_util::stream::BoxStream<'static, Output> {
-    stream::iter([Output::SettingsFailed { provider, error }]).boxed()
+#[cfg(test)]
+mod tests {
+    use futures_util::{StreamExt, stream};
+    use ruru_capture::Capturer;
+    use ruru_config::{AppConfig, CredentialStore};
+    use ruru_provider::{MockProvider, Provider, ProviderError, ProviderRequest, ProviderStream};
+    use ruru_types::{
+        ContextCapture, ImageCapture, Provenance, ProviderId, TextCapture, TextCaptureMethod,
+        WindowBounds,
+    };
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crate::Capture;
+    use crate::providers::Providers;
+    use crate::settings::Settings;
+    use crate::state::{Core, State};
+
+    impl State {
+        pub(crate) fn current_capture(&self) -> Option<&Capture> {
+            self.current_capture.as_ref()
+        }
+    }
+
+    struct EmptyCredentials;
+
+    impl CredentialStore for EmptyCredentials {
+        fn get(&self, _: &ProviderId) -> ruru_config::Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _: &ProviderId, _: &str) -> ruru_config::Result<()> {
+            Ok(())
+        }
+        fn remove(&self, _: &ProviderId) -> ruru_config::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn test_core(providers: Providers, capturer: Arc<dyn Capturer>) -> Core {
+        let mut settings = Settings::new(
+            Ok(AppConfig::default()),
+            Arc::new(EmptyCredentials),
+            Arc::new(|_| Ok(())),
+        );
+        settings.providers = providers;
+        Core::new(Arc::new(settings), capturer)
+    }
+
+    #[derive(Default)]
+    pub(super) struct StubCapturer {
+        pub(super) context_completed: Option<Arc<AtomicBool>>,
+    }
+
+    pub(super) struct RecordingProvider {
+        pub(super) requested_models: Mutex<Vec<String>>,
+        pub(super) aborted: AtomicBool,
+        pub(super) retried: AtomicBool,
+    }
+
+    impl Provider for RecordingProvider {
+        fn configured_models(&self) -> Vec<String> {
+            vec!["first".into(), "second".into()]
+        }
+
+        fn discover_models(
+            &self,
+        ) -> futures_util::future::BoxFuture<'_, Result<Vec<String>, ProviderError>> {
+            Box::pin(async { Ok(self.configured_models()) })
+        }
+
+        fn stream(&self, model: &str, _request: ProviderRequest) -> ProviderStream {
+            self.requested_models
+                .lock()
+                .expect("recorded models mutex poisoned")
+                .push(model.to_owned());
+            stream::empty().boxed()
+        }
+
+        fn abort_request(&self) {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
+
+        fn retry_request(&self) -> Option<ProviderStream> {
+            self.retried.store(true, Ordering::SeqCst);
+            Some(stream::empty().boxed())
+        }
+    }
+
+    impl Capturer for StubCapturer {
+        fn capture_text(&self) -> ruru_capture::Result<TextCapture> {
+            Ok(TextCapture {
+                text: "selected text".into(),
+                method: TextCaptureMethod::Accessibility,
+            })
+        }
+
+        fn begin_context_capture(
+            &self,
+        ) -> ruru_capture::Result<ruru_capture::PendingContextCapture> {
+            let context_completed = self.context_completed.clone();
+            Ok(ruru_capture::PendingContextCapture::new(move || {
+                if let Some(context_completed) = context_completed {
+                    context_completed.store(true, Ordering::SeqCst);
+                }
+                Ok(ContextCapture {
+                    image: ImageCapture {
+                        png: b"context".to_vec(),
+                        region: None,
+                    },
+                    accessibility_text: Some("surrounding context".into()),
+                })
+            }))
+        }
+
+        fn select_region(&self) -> ruru_capture::Result<Option<ImageCapture>> {
+            Ok(Some(ImageCapture {
+                png: b"png".to_vec(),
+                region: None,
+            }))
+        }
+
+        fn capture_provenance(&self) -> ruru_capture::Result<Provenance> {
+            Ok(Provenance {
+                app_name: "Example".into(),
+                window_title: "Document".into(),
+                path: Some("/tmp/example".into()),
+            })
+        }
+
+        fn capture_window_bounds(&self) -> ruru_capture::Result<WindowBounds> {
+            Ok(WindowBounds {
+                x: 100.0,
+                y: 200.0,
+                w: 1200.0,
+                h: 800.0,
+            })
+        }
+    }
+
+    pub(super) fn test_providers() -> Providers {
+        let providers = Providers::new();
+        providers.insert(ProviderId::new("mock"), Arc::new(MockProvider::default()));
+        providers
+    }
+
+    pub(super) fn image() -> ImageCapture {
+        ImageCapture {
+            png: b"png".to_vec(),
+            region: None,
+        }
+    }
+
+    pub(super) fn context() -> ContextCapture {
+        ContextCapture {
+            image: image(),
+            accessibility_text: Some("surrounding context".into()),
+        }
+    }
 }

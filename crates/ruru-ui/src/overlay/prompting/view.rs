@@ -1,77 +1,11 @@
 use iced::widget::{
-    Id, button, column, container, pick_list, row, space, stack, svg, text, text_input,
+    button, column, container, pick_list, row, space, stack, svg, text, text_input,
 };
-use iced::{Center, Element, Fill, Task};
+use iced::{Center, Element, Fill};
 use ruru_types::ModelSelection;
 
-use super::style;
-
-#[derive(Debug)]
-pub struct Prompting {
-    prompt_value: String,
-    input_id: Id,
-    input_focused: bool,
-    capture_failed: bool,
-    placeholder: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub enum Input {
-    InputChanged(String),
-    InputFocusChanged(bool),
-    SubmitRequested,
-    ModelSelected(ModelSelection),
-    CaptureRegionRequested,
-    CaptureFailed,
-}
-
-fn random_placeholder() -> &'static str {
-    use std::hash::{BuildHasher, Hasher};
-
-    let n = std::collections::hash_map::RandomState::new()
-        .build_hasher()
-        .finish() as usize;
-    style::PLACEHOLDERS[n % style::PLACEHOLDERS.len()]
-}
-
-impl Prompting {
-    pub fn new() -> Self {
-        Self {
-            prompt_value: String::new(),
-            input_id: Id::unique(),
-            input_focused: false,
-            capture_failed: false,
-            placeholder: random_placeholder(),
-        }
-    }
-
-    pub fn prompt_value(&self) -> &str {
-        &self.prompt_value
-    }
-
-    pub fn reset(&mut self) {
-        self.prompt_value.clear();
-        self.capture_failed = false;
-        self.placeholder = random_placeholder();
-    }
-
-    pub fn check_focus(&self) -> Task<Input> {
-        iced::widget::operation::is_focused(self.input_id.clone()).map(Input::InputFocusChanged)
-    }
-}
-
-impl Prompting {
-    pub fn update(&mut self, input: Input) {
-        match input {
-            Input::InputChanged(value) => self.prompt_value = value,
-            Input::InputFocusChanged(focused) => self.input_focused = focused,
-            Input::CaptureRegionRequested => self.capture_failed = false,
-            Input::CaptureFailed => self.capture_failed = true,
-            Input::ModelSelected(_) => {}
-            Input::SubmitRequested => {}
-        }
-    }
-}
+use super::super::style;
+use super::{Input, Prompting};
 
 impl Prompting {
     pub fn view(
@@ -135,7 +69,7 @@ impl Prompting {
         .style(move |theme| style::input_box(theme, self.input_focused));
 
         let icon = svg(svg::Handle::from_memory(
-            include_bytes!("../../../../assets/capture-region.svg").as_slice(),
+            include_bytes!("../../../../../assets/capture-region.svg").as_slice(),
         ))
         .width(18)
         .height(18);
@@ -171,41 +105,5 @@ impl Prompting {
         column![prompt_bar, capture_row]
             .spacing(style::CAPTURE_BUTTON_SPACING)
             .into()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn changed_updates_the_local_value() {
-        let mut prompting = Prompting::new();
-
-        prompting.update(Input::InputChanged("what is this?".into()));
-
-        assert_eq!(prompting.prompt_value(), "what is this?");
-    }
-
-    #[test]
-    fn submit_does_not_mutate_local_state() {
-        let mut prompting = Prompting::new();
-        prompting.update(Input::InputChanged("keep me".into()));
-
-        prompting.update(Input::SubmitRequested);
-
-        assert_eq!(prompting.prompt_value(), "keep me");
-    }
-
-    #[test]
-    fn reset_clears_the_prompt_and_capture_failure() {
-        let mut prompting = Prompting::new();
-        prompting.update(Input::InputChanged("old prompt".into()));
-        prompting.update(Input::CaptureFailed);
-
-        prompting.reset();
-
-        assert!(prompting.prompt_value().is_empty());
-        assert!(!prompting.capture_failed);
     }
 }

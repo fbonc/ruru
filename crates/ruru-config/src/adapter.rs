@@ -1,39 +1,16 @@
-use std::collections::BTreeMap;
+use directories::BaseDirs;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-
-use directories::BaseDirs;
-use ruru_types::{ModelSelection, ProviderId};
-use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
-use crate::{Error, Result};
+use crate::{AppConfig, Error, Result};
 
 const CONFIG_FILE: &str = "config.toml";
 const CONFIG_DIRECTORY: &str = "ruru";
 const LEGACY_CONFIG_DIRECTORIES: [&str; 2] = ["minim", "little-owl"];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppConfig {
-    pub version: u32,
-    pub selected_model: Option<ModelSelection>,
-    pub providers: BTreeMap<ProviderId, ProviderSettings>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            version: Self::CURRENT_VERSION,
-            selected_model: None,
-            providers: BTreeMap::new(),
-        }
-    }
-}
-
 impl AppConfig {
-    pub const CURRENT_VERSION: u32 = 1;
-
     pub fn load() -> Result<Self> {
         let legacy_paths = LEGACY_CONFIG_DIRECTORIES
             .map(Self::path_for)
@@ -115,15 +92,12 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ProviderSettings {
-    pub models: Vec<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProviderSettings;
+    use ruru_types::{ModelSelection, ProviderId};
+    use std::collections::BTreeMap;
 
     fn configured() -> AppConfig {
         AppConfig {

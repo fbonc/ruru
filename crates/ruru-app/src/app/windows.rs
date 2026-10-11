@@ -1,7 +1,8 @@
 use iced::{Task, window as iced_window};
 use ruru_types::WindowBounds;
 
-use super::{Input, PROMPTING_HEIGHT, WINDOW_WIDTH};
+use super::Input;
+use super::style::{MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, PROMPTING_HEIGHT, WINDOW_WIDTH};
 
 pub(super) fn main_settings() -> iced_window::Settings {
     iced_window::Settings {
@@ -16,10 +17,7 @@ pub(super) fn main_settings() -> iced_window::Settings {
 pub(super) fn overlay_settings() -> iced_window::Settings {
     iced_window::Settings {
         size: iced::Size::new(WINDOW_WIDTH, PROMPTING_HEIGHT),
-        min_size: Some(iced::Size::new(
-            super::MIN_WINDOW_WIDTH,
-            super::MIN_WINDOW_HEIGHT,
-        )),
+        min_size: Some(iced::Size::new(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)),
         position: iced_window::Position::Centered,
         visible: false,
         decorations: false,

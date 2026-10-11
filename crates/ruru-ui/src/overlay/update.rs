@@ -1,3 +1,5 @@
+use ruru_types::ModelSelection;
+
 use super::answering;
 use super::prompting;
 use super::{Input, Output, Overlay, OverlayMode};
@@ -5,9 +7,13 @@ use super::{Input, Output, Overlay, OverlayMode};
 impl Overlay {
     pub fn update(&mut self, input: Input) -> Option<Output> {
         match input {
+            Input::ModelsChanged(models) => {
+                self.reconcile_models(&models);
+                None
+            }
             Input::Prompting(prompting::Input::SubmitRequested) if self.capture_ready => {
                 self.mode = OverlayMode::Answering;
-                self.answering.reset();
+                self.answering.update(answering::Input::Reset);
                 Some(Output::Submitted {
                     prompt: self.commit_prompt(),
                     model: self.selected_model.clone(),
@@ -36,8 +42,8 @@ impl Overlay {
                 self.target = None;
                 self.capture_ready = false;
                 self.mode = OverlayMode::Prompting;
-                self.prompting.reset();
-                self.answering.reset();
+                self.prompting.update(prompting::Input::Reset);
+                self.answering.update(answering::Input::Reset);
                 None
             }
             Input::CaptureCompleted => {
@@ -57,28 +63,28 @@ impl Overlay {
                 None
             }
             Input::AppendAnswer(chunk) => {
-                self.answering.push_token(&chunk);
+                self.answering.update(answering::Input::AppendToken(chunk));
                 None
             }
             Input::FinishAnswer => {
-                self.answering.finish();
+                self.answering.update(answering::Input::Finished);
                 None
             }
             Input::FailAnswer(error) => {
-                self.answering.fail(error);
+                self.answering.update(answering::Input::Failed(error));
                 None
             }
             Input::ProviderRequestAbortRequested
                 if self.mode == OverlayMode::Answering && self.answering.is_streaming() =>
             {
-                self.answering.finish();
+                self.answering.update(answering::Input::Finished);
                 Some(Output::ProviderRequestAbortRequested)
             }
             Input::ProviderRequestAbortRequested => None,
             Input::ProviderRequestRetryRequested
                 if self.mode == OverlayMode::Answering && !self.answering.is_streaming() =>
             {
-                self.answering.reset();
+                self.answering.update(answering::Input::Reset);
                 Some(Output::ProviderRequestRetryRequested)
             }
             Input::ProviderRequestRetryRequested => None,
@@ -92,14 +98,25 @@ impl Overlay {
             Input::CopyAnswerRequested => None,
             Input::BackRequested => {
                 self.mode = OverlayMode::Prompting;
-                self.answering.reset();
+                self.answering.update(answering::Input::Reset);
                 Some(Output::ModeChanged(OverlayMode::Prompting))
             }
             Input::DismissRequested => {
                 self.visible = false;
-                self.answering.reset();
+                self.answering.update(answering::Input::Reset);
                 Some(Output::Dismissed)
             }
+        }
+    }
+
+    fn reconcile_models(&mut self, models: &[ModelSelection]) {
+        self.available_models = models.to_vec();
+        if self
+            .selected_model
+            .as_ref()
+            .is_none_or(|selected| !models.contains(selected))
+        {
+            self.selected_model = models.first().cloned();
         }
     }
 
@@ -200,8 +217,12 @@ mod tests {
     fn showing_again_returns_to_prompting_with_the_new_target() {
         let mut overlay = Overlay::new();
         overlay.mode = OverlayMode::Answering;
-        overlay.answering.push_token("old answer");
-        overlay.answering.fail("old error".into());
+        overlay
+            .answering
+            .update(answering::Input::AppendToken("old answer".into()));
+        overlay
+            .answering
+            .update(answering::Input::Failed("old error".into()));
         overlay.update(Input::Prompting(prompting::Input::InputChanged(
             "old prompt".into(),
         )));
@@ -392,8 +413,12 @@ mod tests {
     fn back_returns_to_prompting() {
         let mut overlay = Overlay::new();
         overlay.mode = OverlayMode::Answering;
-        overlay.answering.push_token("old answer");
-        overlay.answering.fail("old error".into());
+        overlay
+            .answering
+            .update(answering::Input::AppendToken("old answer".into()));
+        overlay
+            .answering
+            .update(answering::Input::Failed("old error".into()));
 
         assert_eq!(
             overlay.update(Input::BackRequested),
@@ -408,8 +433,12 @@ mod tests {
     fn close_hides_the_overlay() {
         let mut overlay = Overlay::new();
         overlay.visible = true;
-        overlay.answering.push_token("old answer");
-        overlay.answering.fail("old error".into());
+        overlay
+            .answering
+            .update(answering::Input::AppendToken("old answer".into()));
+        overlay
+            .answering
+            .update(answering::Input::Failed("old error".into()));
 
         assert_eq!(
             overlay.update(Input::DismissRequested),
@@ -427,22 +456,26 @@ mod tests {
         let second = ModelSelection::new(provider, "second");
         let mut overlay = Overlay::new().with_selected_model(Some(second.clone()));
 
-        overlay.reconcile_models(&[first.clone(), second.clone()]);
+        overlay.update(Input::ModelsChanged(vec![first.clone(), second.clone()]));
         assert_eq!(overlay.selected_model(), Some(&second));
 
-        overlay.reconcile_models(std::slice::from_ref(&first));
+        overlay.update(Input::ModelsChanged(vec![first.clone()]));
         assert_eq!(overlay.selected_model(), Some(&first));
 
-        overlay.reconcile_models(&[]);
+        overlay.update(Input::ModelsChanged(vec![]));
         assert_eq!(overlay.selected_model(), None);
     }
 
     #[test]
     fn submitting_clears_the_previous_response() {
         let mut overlay = Overlay::new();
-        overlay.answering.push_token("old answer");
-        overlay.answering.finish();
-        overlay.answering.fail("old error".into());
+        overlay
+            .answering
+            .update(answering::Input::AppendToken("old answer".into()));
+        overlay.answering.update(answering::Input::Finished);
+        overlay
+            .answering
+            .update(answering::Input::Failed("old error".into()));
 
         overlay.update(Input::Prompting(prompting::Input::SubmitRequested));
 

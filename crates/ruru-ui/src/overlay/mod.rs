@@ -1,14 +1,17 @@
-use iced::{Subscription, Task};
-use ruru_types::ModelSelection;
-use ruru_types::Target;
+use ruru_types::{ModelSelection, Target};
 
 pub mod answering;
 pub mod prompting;
 
+mod focus;
 mod latex;
+mod state;
 mod style;
+mod subscription;
 mod update;
 mod view;
+
+pub use state::{Overlay, OverlayMode};
 
 #[derive(Debug, Clone)]
 pub enum Input {
@@ -21,6 +24,7 @@ pub enum Input {
     AppendAnswer(String),
     FinishAnswer,
     FailAnswer(String),
+    ModelsChanged(Vec<ModelSelection>),
     ProviderRequestAbortRequested,
     ProviderRequestRetryRequested,
     CopyAnswerRequested,
@@ -46,25 +50,6 @@ pub enum Output {
     Dismissed,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum OverlayMode {
-    #[default]
-    Prompting,
-    Answering,
-}
-
-#[derive(Debug)]
-pub struct Overlay {
-    pub visible: bool,
-    pub target: Option<Target>,
-    selected_model: Option<ModelSelection>,
-    available_models: Vec<ModelSelection>,
-    prompting: prompting::Prompting,
-    answering: answering::Answering,
-    capture_ready: bool,
-    pub mode: OverlayMode,
-}
-
 impl Default for Overlay {
     fn default() -> Self {
         Self {
@@ -81,44 +66,30 @@ impl Default for Overlay {
 }
 
 impl Overlay {
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn mode(&self) -> OverlayMode {
+        self.mode
+    }
+
+    pub fn target(&self) -> Option<&Target> {
+        self.target.as_ref()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
-
     pub fn with_selected_model(mut self, selected_model: Option<ModelSelection>) -> Self {
         self.selected_model = selected_model;
         self
     }
-
     pub fn with_models(mut self, models: Vec<ModelSelection>) -> Self {
-        self.reconcile_models(&models);
+        self.update(Input::ModelsChanged(models));
         self
     }
-
     pub fn selected_model(&self) -> Option<&ModelSelection> {
         self.selected_model.as_ref()
-    }
-
-    pub fn reconcile_models(&mut self, models: &[ModelSelection]) {
-        self.available_models = models.to_vec();
-        if self
-            .selected_model
-            .as_ref()
-            .is_none_or(|selected| !models.contains(selected))
-        {
-            self.selected_model = models.first().cloned();
-        }
-    }
-
-    pub fn check_prompt_input_focus(&self) -> Task<Input> {
-        self.prompting.check_focus().map(Input::Prompting)
-    }
-
-    pub fn subscription(&self) -> Subscription<Input> {
-        if self.mode == OverlayMode::Answering {
-            self.answering.subscription().map(Input::Answering)
-        } else {
-            Subscription::none()
-        }
     }
 }

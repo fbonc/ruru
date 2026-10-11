@@ -17,16 +17,10 @@ use crate::{
     Result, ScreenRect, TextCapture, TextCaptureMethod, WindowBounds,
 };
 
+use super::MacosCapturer;
+
 const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(150);
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(15);
-
-pub struct MacosCapturer {}
-
-impl MacosCapturer {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 
 // Target capture
 impl MacosCapturer {
@@ -60,15 +54,6 @@ impl MacosCapturer {
         }
 
         captured
-    }
-
-    #[cfg(test)]
-    fn capture_image(&self, region: ScreenRect) -> Result<ImageCapture> {
-        let png = screenshot_png(region)?;
-        Ok(ImageCapture {
-            png,
-            region: Some(region),
-        })
     }
 }
 
@@ -306,11 +291,6 @@ fn screenshot(region: ScreenRect) -> Result<RgbaImage> {
     monitor.capture_region(x, y, w, h).map_err(xcap_err)
 }
 
-#[cfg(test)]
-fn screenshot_png(region: ScreenRect) -> Result<Vec<u8>> {
-    encode_png(&screenshot(region)?)
-}
-
 fn monitor_for_display(display: u32) -> Result<Monitor> {
     Monitor::all()
         .map_err(xcap_err)?
@@ -456,6 +436,20 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl MacosCapturer {
+        fn capture_image(&self, region: ScreenRect) -> Result<ImageCapture> {
+            let png = screenshot_png(region)?;
+            Ok(ImageCapture {
+                png,
+                region: Some(region),
+            })
+        }
+    }
+
+    fn screenshot_png(region: ScreenRect) -> Result<Vec<u8>> {
+        encode_png(&screenshot(region)?)
+    }
 
     #[test]
     fn non_empty_rejects_blank() {

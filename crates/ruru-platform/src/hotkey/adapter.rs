@@ -3,10 +3,7 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 use crate::{Error, Hotkey};
 
-pub struct MacosHotkey {
-    _manager: GlobalHotKeyManager,
-    id: u32,
-}
+use super::MacosHotkey;
 
 impl MacosHotkey {
     pub fn new(accelerator: &str) -> Result<Self, Error> {

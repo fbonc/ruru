@@ -1,19 +1,10 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
 use ruru_provider::{Provider, ProviderKind};
 use ruru_types::{ModelSelection, ProviderId};
+use std::sync::Arc;
 
-#[derive(Clone, Default)]
-pub struct Providers {
-    providers: Arc<RwLock<HashMap<ProviderId, Arc<dyn Provider>>>>,
-}
+use super::Providers;
 
 impl Providers {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn configure(
         &self,
         id: ProviderId,

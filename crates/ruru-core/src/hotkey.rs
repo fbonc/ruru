@@ -5,7 +5,7 @@ use futures_channel::mpsc;
 use futures_util::Stream;
 
 use crate::Output;
-use crate::core::Core;
+use crate::state::Core;
 
 const HOTKEY_ACCELERATOR: &str = "Cmd+Shift+KeyE";
 

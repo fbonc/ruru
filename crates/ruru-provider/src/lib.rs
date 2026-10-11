@@ -2,6 +2,7 @@ mod error;
 mod kind;
 mod mock;
 mod openai;
+mod request_abort;
 mod types;
 
 pub use error::ProviderError;

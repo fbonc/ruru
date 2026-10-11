@@ -1,4 +1,4 @@
-use super::{Input, MainWindow, Output, WindowMode};
+use super::{Input, MainWindow, Output, SettingsInput, WindowMode};
 
 impl MainWindow {
     pub fn update(&mut self, input: Input) -> Option<Output> {
@@ -9,7 +9,7 @@ impl MainWindow {
             }
             Input::DismissRequested => {
                 self.visible = false;
-                self.settings.discard_draft();
+                self.settings.update(SettingsInput::DiscardDraft);
                 Some(Output::Dismissed)
             }
             Input::SettingsRequested => {
@@ -18,7 +18,7 @@ impl MainWindow {
             }
             Input::BackRequested => {
                 self.mode = WindowMode::Home;
-                self.settings.discard_draft();
+                self.settings.update(SettingsInput::DiscardDraft);
                 None
             }
             Input::Settings(input) => self.settings.update(input),
